@@ -1,4 +1,5 @@
 const MODEL = 'gemini-2.5-flash';
+const MAX_BYTES = 100 * 1024 * 1024;
 const ALLOWED = new Set(['POST','OPTIONS']);
 
 function corsHeaders(origin) {
@@ -12,6 +13,8 @@ function corsHeaders(origin) {
 function json(data,status=200,origin='*'){return new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8',...corsHeaders(origin)}})}
 async function parseResponse(r){const text=await r.text();let data;try{data=JSON.parse(text)}catch{data={raw:text}}if(!r.ok)throw new Error(data?.error?.message||data?.raw||`Gemini request failed (${r.status})`);return data}
 async function uploadStream(env,request,mime,filename){
+  const length=Number(request.headers.get('content-length')||0);
+  if(length>MAX_BYTES)throw new Error('File is larger than 100 MB. Please upload a shorter/smaller media file.');
   const start=await fetch('https://generativelanguage.googleapis.com/upload/v1beta/files',{method:'POST',headers:{'x-goog-api-key':env.GEMINI_API_KEY,'X-Goog-Upload-Protocol':'resumable','X-Goog-Upload-Command':'start','X-Goog-Upload-Header-Content-Length':request.headers.get('content-length')||'0','X-Goog-Upload-Header-Content-Type':mime,'Content-Type':'application/json'},body:JSON.stringify({file:{display_name:filename||'seo-upload'}})});
   if(!start.ok)throw new Error((await start.text()).slice(0,800)||`Upload initialization failed (${start.status})`);
   const uploadUrl=start.headers.get('x-goog-upload-url');
@@ -41,6 +44,8 @@ export default{async fetch(request,env){
     if(!prompt)return json({error:'Missing analysis prompt.'},400,origin);
     const parts=[{text:prompt}],hasBody=!!request.body;
     if(hasBody){
+      const length=Number(request.headers.get('content-length')||0);
+      if(length>MAX_BYTES)return json({error:'File is larger than 100 MB. Please upload a shorter/smaller media file.'},413,origin);
       if(mime.startsWith('text/')){const text=await request.text();parts.push({text:`Uploaded text source:\n${text.slice(0,300000)}`})}
       else{const f=await uploadStream(env,request,mime,filename);parts.push({file_data:{mime_type:f.mime,file_uri:f.uri}})}
     }
