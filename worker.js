@@ -1,82 +1,15 @@
-const MODEL = 'gemini-2.5-flash';
-const MAX_BYTES = 100 * 1024 * 1024;
-const ALLOWED = new Set(['POST','OPTIONS']);
-
-function corsHeaders(origin) {
-  return {
-    'Access-Control-Allow-Origin': origin || '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-SEO-Prompt, X-SEO-Mime, X-SEO-Filename',
-    'Access-Control-Max-Age': '86400',
-  };
-}
-function json(data,status=200,origin='*'){return new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8',...corsHeaders(origin)}})}
-async function parseResponse(r){const text=await r.text();let data;try{data=JSON.parse(text)}catch{data={raw:text}}if(!r.ok)throw new Error(data?.error?.message||data?.raw||`Gemini request failed (${r.status})`);return data}
-async function uploadStream(env,request,mime,filename){
-  const length=Number(request.headers.get('content-length')||0);
-  if(length>MAX_BYTES)throw new Error('File is larger than 100 MB. Please upload a shorter/smaller media file.');
-  const start=await fetch('https://generativelanguage.googleapis.com/upload/v1beta/files',{method:'POST',headers:{'x-goog-api-key':env.GEMINI_API_KEY,'X-Goog-Upload-Protocol':'resumable','X-Goog-Upload-Command':'start','X-Goog-Upload-Header-Content-Length':request.headers.get('content-length')||'0','X-Goog-Upload-Header-Content-Type':mime,'Content-Type':'application/json'},body:JSON.stringify({file:{display_name:filename||'seo-upload'}})});
-  if(!start.ok)throw new Error((await start.text()).slice(0,800)||`Upload initialization failed (${start.status})`);
-  const uploadUrl=start.headers.get('x-goog-upload-url');
-  if(!uploadUrl)throw new Error('Gemini did not return the resumable upload URL.');
-  const uploaded=await fetch(uploadUrl,{method:'POST',headers:{'Content-Length':request.headers.get('content-length')||'0','X-Goog-Upload-Offset':'0','X-Goog-Upload-Command':'upload, finalize'},body:request.body});
-  const data=await parseResponse(uploaded);
-  const name=data?.file?.name,uri=data?.file?.uri,returnedMime=data?.file?.mimeType||mime;
-  if(!name||!uri)throw new Error('Gemini upload returned no file URI.');
-  let state=data?.file?.state;
-  for(let i=0;i<48&&state&&state!=='ACTIVE';i++){
-    if(state==='FAILED')throw new Error('Gemini could not process the uploaded media.');
-    await new Promise(r=>setTimeout(r,2500));
-    const status=await fetch(`https://generativelanguage.googleapis.com/v1beta/${name}`,{headers:{'x-goog-api-key':env.GEMINI_API_KEY}});
-    const sd=await parseResponse(status);state=sd?.state||sd?.file?.state;
-  }
-  if(state&&state!=='ACTIVE')throw new Error('Media processing timed out. Try a shorter video.');
-  return{uri,mime:returnedMime};
-}
-
-const QUALITY_GUARDRAIL = `
-SERVER-SIDE SEO QUALITY STANDARD — follow this even if the client prompt is weaker:
-You are not a generic caption generator. You are a senior multimodal SEO strategist and content analyst. The uploaded media is the primary evidence. For video, inspect the actual visual sequence and any readable on-screen text; for audio, use the spoken content; for images, inspect the visible subject, scene, text and context. Do not merely repeat the user's topic.
-
-Before generating SEO, internally perform this evidence pipeline:
-1) Identify the exact subject/topic.
-2) Identify concrete visual/audio elements actually supported by the source.
-3) Identify the likely viewer search intent.
-4) Separate source-supported facts from assumptions.
-5) Build natural search phrases from the actual content.
-6) Generate platform-specific SEO rather than copying one package four times.
-7) Remove irrelevant, duplicated, sensational or keyword-stuffed terms.
-8) Score the result only for source-fit/editorial SEO quality, never as a prediction of views or virality.
-
-NEVER invent search volume, rankings, trend percentages, platform secrets, private algorithm signals, people, products, locations, medical/scientific claims, statistics or facts that are not supported by the source or supplied context. If something cannot be verified from the supplied material, mark it as uncertain or omit it. Never guarantee virality.
-
-Keywords must be semantically relevant and useful to a real viewer. Include primary, secondary and long-tail phrases only when supported. Hashtags must be relevant, limited and non-spammy. Do not repeat the same hashtag list across every platform when a better platform-specific selection is possible.
-
-For educational/science/medical content, use accurate neutral terminology and do not turn visualization into a factual medical claim unless the source/context supports it.
-
-Return ONLY the requested JSON object. No markdown fences, no commentary outside JSON. Ensure every required field exists and arrays contain strings.
-`;
-
-export default{async fetch(request,env){
-  const origin=request.headers.get('Origin')||'*';
-  if(!ALLOWED.has(request.method))return json({error:'Method not allowed.'},405,origin);
-  if(request.method==='OPTIONS')return new Response(null,{status:204,headers:corsHeaders(origin)});
-  if(!env.GEMINI_API_KEY)return json({error:'Server is missing GEMINI_API_KEY. Add it as a Worker secret.'},500,origin);
-  const url=new URL(request.url);if(url.pathname!=='/analyze')return json({error:'Use POST /analyze.'},404,origin);
-  try{
-    const clientPrompt=request.headers.get('X-SEO-Prompt')||'',mime=request.headers.get('X-SEO-Mime')||request.headers.get('Content-Type')||'text/plain',filename=request.headers.get('X-SEO-Filename')||'seo-upload';
-    if(!clientPrompt)return json({error:'Missing analysis prompt.'},400,origin);
-    const prompt=QUALITY_GUARDRAIL+'\nCLIENT REQUEST:\n'+clientPrompt;
-    const parts=[{text:prompt}],hasBody=!!request.body;
-    if(hasBody){
-      const length=Number(request.headers.get('content-length')||0);
-      if(length>MAX_BYTES)return json({error:'File is larger than 100 MB. Please upload a shorter/smaller media file.'},413,origin);
-      if(mime.startsWith('text/')){const text=await request.text();parts.push({text:`Uploaded text source:\n${text.slice(0,300000)}`})}
-      else{const f=await uploadStream(env,request,mime,filename);parts.push({file_data:{mime_type:f.mime,file_uri:f.uri}})}
-    }
-    const body={contents:[{role:'user',parts}],generationConfig:{responseMimeType:'application/json',temperature:.35,maxOutputTokens:5000}};
-    const result=await parseResponse(await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':env.GEMINI_API_KEY},body:JSON.stringify(body)}));
-    const text=result?.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('')||'';if(!text)return json({error:'Gemini returned no analysis.'},502,origin);
-    return json({text},200,origin);
-  }catch(error){return json({error:error?.message||'Analysis failed.'},500,origin)}
-}};
+const MODEL='gemini-2.5-flash';
+const MAX=100*1024*1024;
+const HEAD={'Access-Control-Allow-Methods':'POST,OPTIONS','Access-Control-Allow-Headers':'Content-Type,X-SEO-Prompt,X-SEO-Mime,X-SEO-Filename'};
+const res=(d,s=200,o='*')=>new Response(JSON.stringify(d),{status:s,headers:{'Content-Type':'application/json',...HEAD,'Access-Control-Allow-Origin':o}});
+const RULES=`You are ZyvenSEO AI, a senior multimodal SEO strategist. Uploaded media is the source of truth. Analyze the actual source, not merely the user label. Never invent facts, people, products, locations, statistics, search volume, rankings, trends, private algorithm signals, quotes, medical/scientific claims or virality guarantees. If evidence is insufficient, say so.
+Build exactly 1 primary keyword, 5-8 secondary semantic phrases, 6-10 long-tail queries and 3-5 semantic clusters.
+YouTube: 3 distinct titles (search-first, curiosity-first, balanced), concise accurate description, timestamps only when defensible from actual sequence, tags <=400 chars, hook, CTA, thumbnail brief.
+Instagram: native micro-blog caption, 3 topic tags, 5-8 relevant hashtags, hook and CTA.
+TikTok: search-aware caption, 3 on-screen hooks, 2 broad + 2 niche hashtags, separate trending category; trending status is NOT_CONNECTED unless live data is supplied.
+Facebook Reels: conversational headline, readable narrative, discovery keywords, share/save CTA and genuine comment question.
+Pinterest: Pin title <100 chars, description <500 chars, keywords, topics, 3 board options, recommended board, save CTA and on-image text.
+Each platform must be meaningfully different. Score 0-100 is source-fit editorial quality, not predicted views. Return ONLY JSON.`;
+async function parse(r){let t=await r.text(),d;try{d=JSON.parse(t)}catch{d={raw:t}}if(!r.ok)throw Error(d?.error?.message||d?.raw||'AI request failed');return d}
+async function upload(env,req,mime){let n=Number(req.headers.get('content-length')||0);if(n>MAX)throw Error('File exceeds 100 MB');let s=await fetch('https://generativelanguage.googleapis.com/upload/v1beta/files',{method:'POST',headers:{'x-goog-api-key':env.GEMINI_API_KEY,'X-Goog-Upload-Protocol':'resumable','X-Goog-Upload-Command':'start','X-Goog-Upload-Header-Content-Length':String(n),'X-Goog-Upload-Header-Content-Type':mime,'Content-Type':'application/json'},body:'{"file":{"display_name":"zyvenseo-upload"}}'});if(!s.ok)throw Error('Media upload initialization failed');let u=s.headers.get('x-goog-upload-url');let p=await fetch(u,{method:'POST',headers:{'Content-Length':String(n),'X-Goog-Upload-Offset':'0','X-Goog-Upload-Command':'upload, finalize'},body:req.body});let d=await parse(p),name=d?.file?.name,uri=d?.file?.uri;if(!name||!uri)throw Error('No media URI returned');let state=d?.file?.state;for(let i=0;i<48&&state&&state!=='ACTIVE';i++){await new Promise(r=>setTimeout(r,2500));let q=await fetch('https://generativelanguage.googleapis.com/v1beta/'+name,{headers:{'x-goog-api-key':env.GEMINI_API_KEY}});let z=await parse(q);state=z?.state||z?.file?.state}if(state&&state!=='ACTIVE')throw Error('Media processing timed out');return{uri,mime:d?.file?.mimeType||mime}}
+export default{async fetch(req,env){let o=req.headers.get('Origin')||'*';if(req.method==='OPTIONS')return new Response(null,{status:204,headers:{...HEAD,'Access-Control-Allow-Origin':o}});if(req.method!=='POST'||new URL(req.url).pathname!='/analyze')return res({error:'POST /analyze only'},405,o);if(!env.GEMINI_API_KEY)return res({error:'Add GEMINI_API_KEY as a Worker secret.'},500,o);try{let mime=req.headers.get('X-SEO-Mime')||req.headers.get('Content-Type')||'text/plain',prompt=req.headers.get('X-SEO-Prompt')||'';if(!prompt)return res({error:'Missing prompt'},400,o);let parts=[{text:RULES+'\nUSER SETTINGS:\n'+prompt}];if(req.body){if(mime.startsWith('text/'))parts.push({text:'SOURCE TEXT:\n'+(await req.text()).slice(0,300000)});else{let f=await upload(env,req,mime);parts.push({file_data:{mime_type:f.mime,file_uri:f.uri}})}}let r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+MODEL+':generateContent',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':env.GEMINI_API_KEY},body:JSON.stringify({contents:[{role:'user',parts}],generationConfig:{responseMimeType:'application/json',temperature:.28,maxOutputTokens:8192}})});let d=await parse(r),text=d?.candidates?.[0]?.content?.parts?.map(x=>x.text||'').join('');return res({text},200,o)}catch(e){return res({error:e?.message||'Analysis failed'},500,o)}}};
