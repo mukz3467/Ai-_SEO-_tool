@@ -81,5 +81,23 @@
     }
     return {zip:state.zip,files:state.files,framework,entry,changed};
   }
+  function setupAdvancedEndpoint(){
+    const boot=()=>{
+      const ep=document.querySelector("#ep");
+      if(!ep||document.querySelector("#zyven-advanced"))return;
+      const row=ep.closest(".field"); if(row)row.style.display="none";
+      const box=document.createElement("div"); box.id="zyven-advanced"; box.style.marginTop="10px";
+      const saved=localStorage.getItem("zyvenseo_worker_url")||"";
+      if(saved)ep.value=saved;
+      box.innerHTML='<button type="button" class="secondary" id="zyvenAdvancedBtn">Advanced Settings</button><div id="zyvenAdvancedPanel" style="display:none;margin-top:8px;padding:10px;border:1px solid #263a55;border-radius:10px;background:#091321"><div class="small" style="margin-bottom:6px">Backend configuration is hidden from normal users.</div><input id="zyvenWorkerSetting" style="width:100%;padding:10px;background:#08111e;border:1px solid #293a54;border-radius:10px;color:#fff" placeholder="https://your-worker.workers.dev" value="'+esc(saved)+'"><button type="button" class="secondary" id="zyvenSaveWorker">Save backend</button><div id="zyvenWorkerStatus" class="small" style="margin-top:6px"></div></div>';
+      row?.parentElement?.insertBefore(box,row.nextSibling);
+      document.querySelector("#zyvenAdvancedBtn").onclick=()=>{const p=document.querySelector("#zyvenAdvancedPanel");p.style.display=p.style.display==="none"?"block":"none"};
+      document.querySelector("#zyvenSaveWorker").onclick=()=>{
+        const v=document.querySelector("#zyvenWorkerSetting").value.trim().replace(/\/$/,"");
+        try{if(v)new URL(v);else throw Error("Enter a valid Worker URL.");localStorage.setItem("zyvenseo_worker_url",v);ep.value=v;document.querySelector("#zyvenWorkerStatus").textContent="Saved ✓"}catch(e){document.querySelector("#zyvenWorkerStatus").textContent=e.message}
+      };
+    };
+    if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot,{once:true});else boot();
+  }
   window.ZyvenSourceFix={readZip,fixZip,detect};
 })();
