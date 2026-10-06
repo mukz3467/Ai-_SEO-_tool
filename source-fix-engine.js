@@ -63,7 +63,7 @@
     if(!files.length) throw Error("No supported text source files were found in the ZIP.");
     return {zip,files};
   }
-  async function fixZip(file,selected=true){
+  async function fixZip(file,selected=true,approvedPaths=null){
     const state=await readZip(file), framework=detect(state.files), entry=findEntrypoints(state.files,framework), changed=[];
     for(const f of state.files){
       let r={content:f.content,changes:[]};
@@ -72,7 +72,7 @@
       if(r.content!==f.content){f.content=r.content;changed.push({path:f.path,changes:r.changes});}
     }
     if(selected && changed.length){
-      for(const f of state.files) if(f.content!==f.original) state.zip.file(f.path,f.content);
+      for(const f of state.files) if(f.content!==f.original && (!approvedPaths || approvedPaths.has(f.path))) state.zip.file(f.path,f.content);
     }
     return {zip:state.zip,files:state.files,framework,entry,changed};
   }
