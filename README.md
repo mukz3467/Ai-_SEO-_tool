@@ -1,74 +1,27 @@
 # ZyvenSEO AI — Universal Website SEO Optimizer
 
-A platform-independent SEO auditing and optimization interface.
+## Workflow
+1. Paste a public website URL.
+2. Run deterministic technical/on-page crawl diagnostics.
+3. Review evidence, severity, confidence, and auto-fix candidates.
+4. Generate an evidence-bound Gemini optimization plan.
+5. Connect an authorized source repository/CMS to create safe changes.
+6. Create a branch and show a diff before production changes.
+7. Run build/lint/tests.
+8. Re-audit the deployed URL and report what changed.
 
-## What it supports
+## Safety
+A public URL can be audited but cannot authorize source-code modification. Source edits require explicit owner authorization. The product must never claim Google ranking control or fabricate Search Console, traffic, keyword-volume, competitor, or ranking data.
 
-The URL audit does not depend on how a website was built. It can inspect public pages from sites built with or deployed through:
+## Current engine
+The Worker checks HTTPS, title, meta description, H1 structure, canonical, robots directives, Open Graph/Twitter metadata, JSON-LD syntax, viewport, language, image alt coverage, visible content, links, robots.txt, and sitemap.xml. It also blocks obvious localhost/private-network targets and limits redirects.
 
-- Bolt.new
-- Google AI Studio / Gemini-generated sites
-- GitHub
-- Vercel
-- Firebase
-- WordPress
-- Shopify
-- Wix
-- Webflow
-- React / Next.js
-- Plain HTML/CSS/JavaScript
-- Other public HTTP/HTTPS sites
-
-The technology detector is heuristic. It reports what can be observed from the public response; it does not claim perfect framework detection.
-
-## Features
-
-- Deterministic public-page SEO audit
-- HTTPS, title, meta description, H1, canonical, robots, Open Graph, JSON-LD, viewport and language checks
-- Image alt attribute check
-- Visible-text and internal/external-link metrics
-- Basic technology detection
-- Prioritized SEO issues
-- Evidence-based optimization recommendations
-- Optional Gemini optimization plan
-- No fabricated rankings, search volume, traffic forecasts or “#1 guarantee”
+## Auto-fix policy
+Only deterministic, low-risk changes may be marked safe. Content, canonical, schema, redirects, indexing directives, and framework-specific source edits require review unless the system has enough verified context to prove the change is safe.
 
 ## Architecture
-
-- `index.html` — static dashboard, suitable for GitHub Pages
-- `worker.js` — Cloudflare Worker API with `/audit` and optional `/ai`
-- `wrangler.toml` — Worker configuration
-- `api/gemini.js` — legacy Vercel endpoint retained for compatibility
-
-## Deploy
-
-### Frontend
-
-Enable GitHub Pages for this repository and publish the branch/folder containing `index.html`.
-
-### Backend
-
-Deploy `worker.js` as a Cloudflare Worker. Put the Gemini key in a Worker secret named:
-
-`GEMINI_API_KEY`
-
-The browser never receives the Gemini key.
-
-Then paste the Worker base URL into the dashboard, for example:
-
-`https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev`
-
-The frontend calls:
-
-- `POST /audit` for deterministic URL analysis
-- `POST /ai` for the optional Gemini optimization plan
-
-## Important limitation
-
-A public URL can be audited, but it cannot legally or technically be used to silently modify another person's source code. Actual code changes require owner-authorized access such as GitHub, a CMS API, or another supported integration.
-
-Likewise, this product cannot control Google's ranking systems or guarantee a #1 position. Search Console, analytics and authenticated repository access should be added as separate authorized integrations for deeper optimization workflows.
-
-## Production hardening
-
-Before opening the Worker as a public SaaS, add authentication, rate limiting, abuse protection, target-URL restrictions/SSRF protections, logging, quotas and billing controls.
+- Frontend: static HTML/JS
+- Backend: Cloudflare Worker
+- AI: Gemini server-side secret
+- Source control: GitHub authorization
+- Optional future integrations: Search Console, PageSpeed Insights, CMS APIs, deployment providers
